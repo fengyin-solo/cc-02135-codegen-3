@@ -32,7 +32,7 @@
                     <p id="fileSize" style="color: var(--text-secondary); font-size: 0.9375rem;"></p>
                 </div>
 
-                <div class="share-meta" style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border); border-radius: 16px; padding: 20px; margin-bottom: 32px;">
+                <div class="share-meta" style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border); border-radius: 16px; padding: 20px; margin-bottom: 24px;">
                     <div style="display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border);">
                         <span style="color: var(--text-secondary); font-size: 0.875rem;">分享者</span>
                         <span id="sharedBy" style="font-weight: 500;"></span>
@@ -47,12 +47,15 @@
                     </div>
                 </div>
 
+                <!-- 授权策略判定结果（与真实下载同一引擎，刷新/重新进入保持一致） -->
+                <div id="policyNotice" class="policy-notice" style="margin-bottom: 20px;"></div>
+
                 <button class="upload-btn" id="downloadBtn" onclick="downloadFile()" style="width: 100%; justify-content: center; margin: 0;">
                     <span style="font-size: 1.125rem;">⬇️ 下载文件</span>
                 </button>
 
                 <p style="text-align: center; color: var(--text-secondary); font-size: 0.8125rem; margin-top: 20px;">
-                    请在有效期内下载，过期后链接将失效
+                    请在有效期内下载，过期后链接将失效；下载需同时满足分享者设置的授权策略
                 </p>
             </div>
         </div>
@@ -173,25 +176,81 @@
             document.getElementById('fileSize').textContent = formatSize(info.filesize);
             document.getElementById('sharedBy').textContent = escapeHtml(info.created_by);
             document.getElementById('expireTime').textContent = formatTimestamp(info.expires_at);
-            document.getElementById('downloadCount').textContent = 
+            document.getElementById('downloadCount').textContent =
                 info.max_downloads ? `${info.download_count} / ${info.max_downloads} 次` : `${info.download_count} 次（无限制）`;
+
+            renderPolicyNotice(info.policy);
+        }
+
+        // 渲染授权策略预判（真实下载前的结果，刷新页面结论一致）
+        function renderPolicyNotice(policy) {
+            const box = document.getElementById('policyNotice');
+            const btn = document.getElementById('downloadBtn');
+            if (!policy) {
+                box.className = 'policy-notice muted';
+                box.textContent = '未获取到授权策略信息，点击下载时将再次校验。';
+                btn.disabled = false;
+                btn.style.opacity = '';
+                return;
+            }
+            if (policy.allowed) {
+                if (policy.enforced === false) {
+                    box.className = 'policy-notice muted';
+                    box.textContent = '🛡️ 授权策略中心尚未配置策略，本次下载按分享链接规则放行。';
+                } else {
+                    const remaining = policy.matched_policy && policy.matched_policy.remaining_downloads;
+                    const name = policy.matched_policy && policy.matched_policy.name;
+                    box.className = 'policy-notice allow';
+                    box.innerHTML = `🛡️ 授权策略检查通过：命中策略「${escapeHtml(name)}」`
+                        + (remaining == null ? '，取件次数不限。' : `，该策略剩余取件 ${remaining} 次。`);
+                }
+                btn.disabled = false;
+                btn.style.opacity = '';
+            } else {
+                box.className = 'policy-notice deny';
+                box.innerHTML = `⛔ ${escapeHtml(policy.message || '当前不满足下载授权策略，无法下载。')}`
+                    + renderDisabledHint(policy);
+                btn.disabled = true;
+                btn.style.opacity = '0.5';
+                btn.style.cursor = 'not-allowed';
+            }
+        }
+
+        function renderDisabledHint(policy) {
+            const hits = policy.disabled_matches || [];
+            if (!hits.length) return '';
+            return `<br>已停用的匹配策略：${hits.map(p => `「${escapeHtml(p.name)}」`).join('、')}，请联系分享者启用。`;
         }
 
         // 下载文件
         async function downloadFile() {
             if (!currentShareId) return;
 
+            const btn = document.getElementById('downloadBtn');
+            if (btn.disabled) return;
+
             showLoading('准备下载...');
 
             try {
+                // 公开页预检：与真实下载同一个策略引擎，结果一致，且不扣次数
+                const preResp = await fetch(`${API_BASE}/policies/check/share/${currentShareId}`);
+                const pre = await preResp.json();
+                if (!preResp.ok || pre.allowed === false) {
+                    hideLoading();
+                    alert(`下载被拒绝：${pre.message || '授权策略校验未通过'}`);
+                    // 重新进入/刷新式核对：拉取最新信息
+                    loadShareInfo();
+                    return;
+                }
+
                 const response = await fetch(`${API_BASE}/share/${currentShareId}/download`);
-                
+
                 if (!response.ok) {
-                    const result = await response.json();
+                    const result = await response.json().catch(() => ({}));
                     hideLoading();
                     alert(`下载失败: ${result.error || '未知错误'}`);
-                    
-                    // 重新加载分享信息，可能是过期了
+
+                    // 重新加载分享信息，可能是过期/次数用完/策略变化
                     loadShareInfo();
                     return;
                 }

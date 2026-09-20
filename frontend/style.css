@@ -15,6 +15,7 @@
     --glass: rgba(255, 255, 255, 0.05);
     --success: #22c55e;
     --error: #ef4444;
+    color-scheme: dark;
 }
 
 body {
@@ -780,34 +781,391 @@ h2 {
     .container {
         padding: 32px 16px;
     }
-    
+
     h1 {
         font-size: 2.25rem;
     }
-    
+
     .upload-section,
     .file-list-section {
         padding: 24px;
         border-radius: 16px;
     }
-    
+
     .upload-zone {
         padding: 32px 16px;
     }
-    
+
     .file-item {
         flex-direction: column;
         gap: 16px;
         align-items: flex-start;
     }
-    
+
     .download-btn {
         width: 100%;
         justify-content: center;
     }
-    
+
     .modal-content {
         padding: 32px 24px;
         margin: 16px;
     }
+}
+
+/* ============================================================
+   下载授权策略中心
+   ============================================================ */
+.hidden { display: none !important; }
+
+.nav-link {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.8125rem;
+}
+.nav-link:hover { color: var(--accent); }
+.nav-divider { color: var(--border); margin: 0 4px; }
+
+.policy-title { font-size: 2.25rem; }
+
+.policy-container { max-width: 1080px; }
+
+.policy-banner {
+    border-radius: 14px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+    font-size: 0.875rem;
+    line-height: 1.7;
+    border: 1px solid var(--border);
+}
+.policy-banner.warn {
+    background: rgba(234, 179, 8, 0.08);
+    border-color: rgba(234, 179, 8, 0.3);
+    color: #fde68a;
+}
+.policy-banner.ok {
+    background: rgba(34, 197, 94, 0.08);
+    border-color: rgba(34, 197, 94, 0.25);
+    color: #bbf7d0;
+}
+.policy-banner.info {
+    background: rgba(59, 130, 246, 0.08);
+    border-color: rgba(59, 130, 246, 0.25);
+    color: #bfdbfe;
+}
+.policy-banner a { color: inherit; }
+
+.policy-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+.policy-toolbar .upload-btn { margin-top: 0; padding: 12px 20px; font-size: 0.875rem; }
+
+.btn-secondary-outline {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    padding: 12px 20px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+.btn-secondary-outline:hover {
+    color: var(--text-primary);
+    border-color: var(--accent);
+    background: rgba(59, 130, 246, 0.06);
+}
+
+.toolbar-tabs {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 4px;
+}
+.tab-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    padding: 8px 18px;
+    border-radius: 9px;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    font-weight: 500;
+}
+.tab-btn.active {
+    background: linear-gradient(135deg, var(--accent), #8b5cf6);
+    color: #fff;
+}
+
+.hidden-wide { display: none; }
+
+/* 策略卡片 */
+.policy-list { display: flex; flex-direction: column; gap: 14px; }
+
+.policy-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px 24px;
+    transition: all 0.3s ease;
+}
+.policy-card:hover { background: rgba(255, 255, 255, 0.05); }
+.policy-card.disabled-card { opacity: 0.65; }
+
+.policy-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+.policy-name { font-weight: 600; font-size: 1rem; margin-right: 10px; }
+
+.policy-card-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.mini-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    padding: 6px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.75rem;
+    transition: all 0.2s ease;
+}
+.mini-btn:hover { color: var(--text-primary); border-color: var(--accent); }
+.mini-btn.danger:hover { color: var(--error); border-color: var(--error); background: rgba(239, 68, 68, 0.08); }
+
+.policy-desc {
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    margin-bottom: 14px;
+}
+
+.policy-scope-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    font-size: 0.8125rem;
+}
+.scope-label {
+    display: block;
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+.scope-tag {
+    display: inline-block;
+    background: rgba(59, 130, 246, 0.12);
+    color: #93c5fd;
+    border-radius: 6px;
+    padding: 2px 8px;
+    margin: 2px 4px 2px 0;
+    font-size: 0.75rem;
+}
+.scope-all {
+    display: inline-block;
+    background: rgba(139, 92, 246, 0.15);
+    color: #c4b5fd;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 0.75rem;
+}
+
+.share-item-status.pending {
+    background: rgba(234, 179, 8, 0.15);
+    color: #fbbf24;
+}
+
+.conflict-box {
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+}
+.conflict-item { color: #fca5a5; font-size: 0.8125rem; line-height: 1.7; }
+
+/* 编辑器 */
+.policy-modal-content { max-width: 680px; max-height: 90vh; overflow-y: auto; }
+.policy-modal-content input[type="text"],
+.policy-modal-content input[type="number"],
+.policy-modal-content input[type="datetime-local"],
+.policy-modal-content textarea {
+    width: 100%;
+    padding: 13px 16px;
+    margin-bottom: 0;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    transition: all 0.3s ease;
+    font-family: inherit;
+}
+.policy-modal-content textarea { resize: vertical; }
+.policy-modal-content input:focus,
+.policy-modal-content textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: rgba(59, 130, 246, 0.05);
+}
+.policy-modal-content input:disabled { opacity: 0.45; }
+
+.req { color: var(--error); }
+.inline-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    cursor: pointer;
+}
+
+.form-row-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+.quota-row { display: flex; align-items: center; gap: 16px; }
+.quota-row input { max-width: 140px; }
+
+.checkbox-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+.chip input { display: none; }
+.chip.selected {
+    border-color: var(--accent);
+    background: rgba(59, 130, 246, 0.15);
+    color: #bfdbfe;
+}
+.chip-add-row { margin-top: 6px; }
+.chip-add-row input { max-width: 320px; }
+
+.auto-description {
+    margin-top: 8px;
+    font-size: 0.75rem;
+    color: #93c5fd;
+    line-height: 1.6;
+}
+
+.policy-validation:empty { display: none; }
+.policy-validation {
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+}
+.val-err { color: #fca5a5; font-size: 0.8125rem; line-height: 1.8; }
+
+/* 预览 */
+.preview-list { display: flex; flex-direction: column; gap: 10px; margin: 16px 0; }
+.preview-item {
+    border-radius: 12px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.03);
+}
+.preview-item.allow { border-color: rgba(34, 197, 94, 0.35); background: rgba(34, 197, 94, 0.06); }
+.preview-item.deny { border-color: rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.06); }
+.preview-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.preview-verdict { font-weight: 600; font-size: 0.875rem; }
+.preview-label { color: var(--text-secondary); font-size: 0.75rem; }
+.preview-meta, .preview-reason, .preview-quota { font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.6; }
+.preview-reason { color: var(--text-primary); }
+.preview-add {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr auto;
+    gap: 8px;
+    margin-top: 8px;
+}
+.preview-add input {
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 0.8125rem;
+}
+
+/* 历史 */
+.history-filters { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+.history-filters select {
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text-primary);
+    font-size: 0.8125rem;
+}
+.history-list { display: flex; flex-direction: column; gap: 10px; max-height: 600px; overflow-y: auto; }
+.history-item {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+}
+.history-head { display: flex; align-items: center; gap: 10px; font-size: 0.8125rem; margin-bottom: 6px; }
+.history-time { margin-left: auto; color: var(--text-secondary); font-size: 0.75rem; }
+.history-msg { font-size: 0.875rem; margin-bottom: 6px; line-height: 1.6; }
+.history-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+/* 目录页/分享页的授权状态提示 */
+.policy-notice {
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-top: 12px;
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    border: 1px solid var(--border);
+}
+.policy-notice.deny {
+    background: rgba(239, 68, 68, 0.08);
+    border-color: rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+}
+.policy-notice.allow {
+    background: rgba(34, 197, 94, 0.08);
+    border-color: rgba(34, 197, 94, 0.25);
+    color: #bbf7d0;
+}
+.policy-notice.muted {
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-secondary);
+}
+
+@media (max-width: 640px) {
+    .form-row-2, .preview-add { grid-template-columns: 1fr; }
+    .policy-card-head { flex-direction: column; align-items: flex-start; }
+    .toolbar-tabs { margin-left: 0; }
 }

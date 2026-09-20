@@ -56,6 +56,46 @@ def init_db():
         )
     ''')
 
+    # 下载授权策略：按 用户 × 文件类型 × 时间范围 × 取件次数 组合授权范围
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS download_policies (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            users_json TEXT NOT NULL DEFAULT '[]',
+            file_types_json TEXT NOT NULL DEFAULT '[]',
+            start_at REAL,
+            end_at REAL,
+            max_downloads INTEGER,
+            used_downloads INTEGER NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_by TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # 策略判定/配置历史，用于事后核对
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS policy_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts REAL NOT NULL,
+            event_type TEXT NOT NULL,
+            decision TEXT NOT NULL,
+            policy_id TEXT,
+            policy_name TEXT,
+            subject TEXT,
+            requester TEXT,
+            file_id TEXT,
+            filename TEXT,
+            source TEXT,
+            reason TEXT,
+            message TEXT,
+            detail_json TEXT,
+            actor TEXT
+        )
+    ''')
+
     default_users = [
         ('admin', hashlib.sha256('admin123'.encode()).hexdigest()),
         ('user', hashlib.sha256('user123'.encode()).hexdigest()),

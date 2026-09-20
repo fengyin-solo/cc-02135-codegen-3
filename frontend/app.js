@@ -198,58 +198,122 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// 请求下载 - 检查token是否有效，有效则直接下载
+// 请求下载 - 先走授权策略预检，再真正下载（预检不占用取件次数）
 async function requestDownload(fileId) {
     showLoading('检查授权...');
-    
-    // 检查是否有有效的token
-    if (await TokenManager.isValid()) {
-        // token有效，使用 fetch + Authorization 头下载
-        document.getElementById('loadingText').textContent = '正在下载...';
-        try {
-            const response = await fetch(`${API_BASE}/download/${fileId}`, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${TokenManager.get()}`
-                }
-            });
-            if (response.ok) {
-                const blob = await response.blob();
-                const contentDisposition = response.headers.get('Content-Disposition');
-                let filename = 'download';
-                if (contentDisposition) {
-                    const match = contentDisposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';\n]+)/i);
-                    if (match) filename = decodeURIComponent(match[1]);
-                }
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = filename;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                a.remove();
-            } else {
-                const result = await response.json();
-                alert(`下载失败: ${result.error || '未知错误'}`);
-            }
-        } catch (error) {
-            alert(`下载失败: ${error.message}`);
-        } finally {
-            hideLoading();
-        }
+
+    // 没有登录态：先弹身份验证（服务端也会再次校验，失效令牌不会放行）
+    if (!(await TokenManager.isValid())) {
+        hideLoading();
+        TokenManager.clear();
+        document.getElementById('downloadFileId').value = fileId;
+        document.getElementById('authModal').classList.add('active');
+        document.getElementById('authError').textContent = '';
+        document.getElementById('username').value = '';
+        document.getElementById('password').value = '';
+        document.getElementById('username').focus();
         return;
     }
-    
-    // token无效或不存在，弹出登录框
-    hideLoading();
-    TokenManager.clear();
-    document.getElementById('downloadFileId').value = fileId;
-    document.getElementById('authModal').classList.add('active');
-    document.getElementById('authError').textContent = '';
-    document.getElementById('username').value = '';
-    document.getElementById('password').value = '';
-    document.getElementById('username').focus();
+
+    // 目录页/重新进入页面统一通过策略引擎预检，结论与真实下载一致
+    let precheck;
+    try {
+        const preResp = await fetch(`${API_BASE}/policies/check/file/${fileId}`, {
+            headers: { 'Authorization': `Bearer ${TokenManager.get()}` }
+        });
+        precheck = await preResp.json();
+        if (preResp.status === 401) {
+            hideLoading();
+            TokenManager.clear();
+            alert(`授权失败：${precheck.error || '身份令牌无效或已过期，请重新登录'}`);
+            document.getElementById('downloadFileId').value = fileId;
+            document.getElementById('authModal').classList.add('active');
+            document.getElementById('authError').textContent = precheck.error || '';
+            return;
+        }
+        if (!preResp.ok && preResp.status !== 403) {
+            hideLoading();
+            alert(`授权检查失败：${precheck.message || precheck.error || '未知错误'}`);
+            return;
+        }
+    } catch (error) {
+        hideLoading();
+        alert(`授权检查失败: ${error.message}`);
+        return;
+    }
+
+    if (!precheck.allowed) {
+        hideLoading();
+        showPolicyDenial(precheck);
+        return;
+    }
+
+    // 预检放行：执行真实下载（服务端会再次判定并扣减取件次数）
+    document.getElementById('loadingText').textContent = '正在下载...';
+    try {
+        const response = await fetch(`${API_BASE}/download/${fileId}`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${TokenManager.get()}`
+            }
+        });
+        if (response.ok) {
+            const blob = await response.blob();
+            const contentDisposition = response.headers.get('Content-Disposition');
+            let filename = 'download';
+            if (contentDisposition) {
+                const match = contentDisposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';\n]+)/i);
+                if (match) filename = decodeURIComponent(match[1]);
+            }
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            a.remove();
+        } else {
+            // 预检后、真实下载前策略状态可能变化（如次数恰好用完），以服务端解释为准
+            const result = await response.json().catch(() => ({}));
+            if (response.status === 401) {
+                TokenManager.clear();
+                document.getElementById('downloadFileId').value = fileId;
+                document.getElementById('authModal').classList.add('active');
+                document.getElementById('authError').textContent = result.error || '身份令牌无效或已过期，请重新登录';
+            } else {
+                showPolicyDenial(result);
+            }
+        }
+    } catch (error) {
+        alert(`下载失败: ${error.message}`);
+    } finally {
+        hideLoading();
+    }
+}
+
+// 统一展示策略拒绝原因（空规则、停用、时间范围、次数、冲突等）
+function showPolicyDenial(detail) {
+    const reasonMap = {
+        no_active_policies: '没有启用中的授权策略',
+        policy_disabled: '匹配的策略已停用',
+        outside_time_window: '不在允许的时间范围内',
+        user_not_authorized: '用户未被授权',
+        file_type_not_authorized: '文件类型未被授权',
+        download_quota_exhausted: '取件次数已用完',
+        policy_conflict: '策略配置冲突',
+    };
+    const title = reasonMap[detail.reason] || '下载被授权策略拒绝';
+    let msg = detail.message || detail.error || '未知原因';
+    const disabled = detail.disabled_matches || (detail.detail && detail.detail.disabled_matches) || [];
+    if (disabled.length) {
+        msg += `\n\n已停用的匹配策略：${disabled.map(p => `「${p.name}」`).join('、')}，请联系管理员启用。`;
+    }
+    const conflicts = detail.conflicts || (detail.detail && detail.detail.conflicts) || [];
+    if (conflicts.length) {
+        msg += `\n\n同时命中的冲突策略：${conflicts.map(p => `「${p.name}」`).join('、')}，请先调整重叠策略。`;
+    }
+    alert(`⛔ ${title}\n\n${msg}`);
 }
 
 // 关闭验证弹窗
@@ -315,8 +379,12 @@ document.getElementById('authForm').addEventListener('submit', async (e) => {
                     window.URL.revokeObjectURL(url);
                     a.remove();
                 } else {
-                    const errResult = await downloadResponse.json();
-                    document.getElementById('authError').textContent = `下载失败: ${errResult.error || '未知错误'}`;
+                    const errResult = await downloadResponse.json().catch(() => ({}));
+                    if (downloadResponse.status === 403) {
+                        showPolicyDenial(errResult);
+                    } else {
+                        document.getElementById('authError').textContent = `下载失败: ${errResult.error || '未知错误'}`;
+                    }
                 }
             } catch (downloadError) {
                 document.getElementById('authError').textContent = `下载失败: ${downloadError.message}`;

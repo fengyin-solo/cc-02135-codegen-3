@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>下载授权策略中心 - CloudVault</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☁️</text></svg>">
+</head>
+<body>
+    <div class="container policy-container">
+        <!-- 用户状态栏 -->
+        <div id="userBar" class="user-bar hidden">
+            <span class="user-info">
+                <a href="index.html" class="nav-link">← 返回文件库</a>
+                <span class="nav-divider">|</span>
+                <span class="user-avatar" id="userAvatar">A</span>
+                <span id="currentUser">未登录</span>
+                <button class="logout-btn" onclick="logout()" title="退出登录">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                        <polyline points="16 17 21 12 16 7"></polyline>
+                        <line x1="21" y1="12" x2="9" y2="12"></line>
+                    </svg>
+                </button>
+            </span>
+        </div>
+
+        <h1 class="policy-title">下载授权策略中心</h1>
+        <p class="subtitle">按 用户 × 文件类型 × 时间范围 × 取件次数 组合授权，策略命中后立即生效</p>
+
+        <!-- 未登录提示 -->
+        <div id="loginNeeded" class="policy-banner warn hidden">
+            请先登录后再管理授权策略。<a href="index.html">去文件库登录 →</a>
+        </div>
+
+        <!-- 中心状态条 -->
+        <div id="centerState" class="policy-banner info"></div>
+
+        <!-- 工具栏 -->
+        <div class="policy-toolbar">
+            <button class="upload-btn" id="newPolicyBtn" onclick="openEditor()">＋ 新建策略</button>
+            <button class="btn-secondary-outline" onclick="loadPolicies()">刷新</button>
+            <div class="toolbar-tabs">
+                <button class="tab-btn active" data-tab="policies" onclick="switchTab('policies')">策略配置</button>
+                <button class="tab-btn" data-tab="history" onclick="switchTab('history')">判定历史</button>
+            </div>
+        </div>
+
+        <!-- 策略列表 -->
+        <div id="policiesTab" class="file-list-section">
+            <h2>授权策略</h2>
+            <div id="policyList" class="policy-list"></div>
+        </div>
+
+        <!-- 历史核对 -->
+        <div id="historyTab" class="file-list-section hidden-wide">
+            <h2>判定与配置历史</h2>
+            <div class="history-filters">
+                <select id="historyTypeFilter" onchange="loadHistory()">
+                    <option value="">全部事件</option>
+                    <option value="download_decision">下载判定</option>
+                    <option value="policy_config">配置变更</option>
+                </select>
+                <select id="historyDecisionFilter" onchange="loadHistory()">
+                    <option value="">全部结果</option>
+                    <option value="allow">放行</option>
+                    <option value="deny">拒绝</option>
+                    <option value="info">信息</option>
+                </select>
+                <button class="btn-secondary-outline" onclick="loadHistory()">刷新历史</button>
+            </div>
+            <div id="historyList" class="history-list"></div>
+        </div>
+
+        <!-- 加载动画遮罩 -->
+        <div id="loadingOverlay" class="loading-overlay">
+            <div class="loader">
+                <div class="spinner"></div>
+                <p id="loadingText">加载中...</p>
+            </div>
+        </div>
+
+        <!-- 策略编辑弹窗 -->
+        <div id="policyModal" class="modal">
+            <div class="modal-content policy-modal-content">
+                <h2 id="editorTitle">新建授权策略</h2>
+                <p>空规则（不选用户或文件类型）不会被保存；授权范围与已有启用策略重叠时会提示冲突</p>
+
+                <input type="hidden" id="policyId">
+
+                <div class="form-group">
+                    <label>策略名称 <span class="req">*</span></label>
+                    <input type="text" id="policyName" maxlength="80" placeholder="例如：研发组-9月-PDF临时下载">
+                </div>
+
+                <div class="form-group">
+                    <label>策略说明（留空将自动生成）</label>
+                    <textarea id="policyDescription" rows="2" placeholder="描述该策略的业务用途，留空时系统会根据范围自动生成说明"></textarea>
+                    <div id="autoDescription" class="auto-description"></div>
+                </div>
+
+                <div class="form-group">
+                    <label>授权用户 <span class="req">*</span></label>
+                    <div class="checkbox-row" id="userChips"></div>
+                    <div class="chip-add-row">
+                        <input type="text" id="customUser" placeholder="添加其他用户名，回车确认">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>授权文件类型（扩展名，不含点） <span class="req">*</span></label>
+                    <div class="checkbox-row" id="typeChips"></div>
+                    <div class="chip-add-row">
+                        <input type="text" id="customType" placeholder="添加其他类型，如 csv，回车确认">
+                    </div>
+                </div>
+
+                <div class="form-row-2">
+                    <div class="form-group">
+                        <label>生效开始时间（留空立即生效）</label>
+                        <input type="datetime-local" id="policyStart" step="1">
+                    </div>
+                    <div class="form-group">
+                        <label>生效结束时间（留空长期有效）</label>
+                        <input type="datetime-local" id="policyEnd" step="1">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>最大取件次数 <span class="req">*</span></label>
+                    <div class="quota-row">
+                        <input type="number" id="policyMaxDownloads" min="-1" step="1" value="10">
+                        <label class="inline-check"><input type="checkbox" id="policyUnlimited"> 不限次数</label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="inline-check"><input type="checkbox" id="policyEnabled" checked> 保存后立即启用</label>
+                </div>
+
+                <div id="policyValidation" class="policy-validation"></div>
+
+                <div class="modal-buttons">
+                    <button type="button" class="btn-secondary" onclick="closeEditor()">取消</button>
+                    <button type="button" class="btn-secondary-outline" onclick="runPreview()">命中预览</button>
+                    <button type="button" class="btn-primary" onclick="savePolicy()">保存策略</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 预览弹窗 -->
+        <div id="previewModal" class="modal">
+            <div class="modal-content policy-modal-content">
+                <h2>策略命中结果预览</h2>
+                <p>预览只模拟判定结果，不会保存策略、不占用取件次数</p>
+                <div id="previewDescription" class="auto-description"></div>
+                <div id="previewResults" class="preview-list"></div>
+                <div class="preview-add">
+                    <input type="text" id="previewUser" placeholder="模拟用户名">
+                    <input type="text" id="previewFile" placeholder="模拟文件名，如 合同.pdf">
+                    <input type="number" id="previewUsed" min="0" placeholder="已取件次数(可选)">
+                    <button type="button" class="btn-secondary-outline" onclick="addPreviewScenario()">添加场景</button>
+                </div>
+                <div class="modal-buttons">
+                    <button type="button" class="btn-primary" onclick="closePreview()">知道了</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="policy.js"></script>
+</body>
+</html>

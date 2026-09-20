@@ -8,7 +8,8 @@ from flask import request, jsonify, send_file
 from werkzeug.utils import secure_filename
 from routes import files_bp
 from database import get_db
-from auth import verify_token, get_username_from_token, login_required
+from auth import get_username_from_token, login_required
+import policy_engine as pe
 from config import UPLOAD_FOLDER, MAX_FILE_SIZE, BLOCKED_EXTENSIONS, SHARE_LINK_EXPIRE_HOURS, SHARE_LINK_MAX_DOWNLOADS
 
 logger = logging.getLogger(__name__)
@@ -87,25 +88,78 @@ def download_file(file_id):
     else:
         token = request.args.get('token')  # 向后兼容，建议前端迁移到 Authorization 头
 
-    if not token or not verify_token(token):
-        return jsonify({'error': '未授权或token已过期'}), 401
+    # 令牌层：缺失 / 失效都要解释原因，且绝不能放行
+    if not token:
+        pe.log_event('download_decision', 'deny', file_id=file_id, source='directory',
+                     reason=pe.REASON_TOKEN_MISSING,
+                     message='下载请求未携带身份令牌')
+        return jsonify({'error': '未授权：请先完成身份验证',
+                        'reason': pe.REASON_TOKEN_MISSING}), 401
+
+    username = get_username_from_token(token)
+    if not username:
+        pe.log_event('download_decision', 'deny', file_id=file_id, source='directory',
+                     reason=pe.REASON_TOKEN_INVALID,
+                     message='下载请求携带的令牌无效或已过期')
+        return jsonify({'error': '身份令牌无效或已过期，请重新登录后再试',
+                        'reason': pe.REASON_TOKEN_INVALID}), 401
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT name, path FROM files WHERE id = ?', (file_id,))
+    cursor.execute('SELECT id, name, path FROM files WHERE id = ?', (file_id,))
     file_info = cursor.fetchone()
-    conn.close()
 
     if not file_info:
-        return jsonify({'error': '文件不存在'}), 404
+        pe.log_event('download_decision', 'deny', subject=username, file_id=file_id,
+                     source='directory', reason=pe.REASON_FILE_NOT_FOUND,
+                     message='目标文件不存在', actor=username, conn=conn)
+        conn.close()
+        return jsonify({'error': '文件不存在', 'reason': pe.REASON_FILE_NOT_FOUND}), 404
+
+    # 授权策略判定（与 /api/policies/check/file 使用同一个引擎，结果一致）
+    decision = pe.evaluate(username, file_info['name'], conn=conn)
+    if not decision['allowed']:
+        pe.log_event(
+            'download_decision', 'deny',
+            policy_id=(decision.get('matched_policy') or {}).get('id'),
+            subject=username, requester=username,
+            file_id=file_id, filename=file_info['name'], source='directory',
+            reason=decision['reason'], message=decision['message'],
+            actor=username, conn=conn,
+        )
+        conn.close()
+        logger.warning("下载被策略拒绝: 用户=%s 文件=%s 原因=%s",
+                       username, file_info['name'], decision['reason'])
+        return jsonify({'error': decision['message'], 'reason': decision['reason'],
+                        'detail': {k: decision.get(k) for k in
+                                   ('disabled_matches', 'conflicts', 'enforced')}}), 403
 
     if not os.path.abspath(file_info['path']).startswith(os.path.abspath(UPLOAD_FOLDER)):
+        conn.close()
         return jsonify({'error': '非法文件路径'}), 403
 
     if not os.path.exists(file_info['path']):
+        conn.close()
         return jsonify({'error': '文件不存在'}), 404
 
-    logger.info(f"文件下载: {file_info['name']} (ID: {file_id})")
+    if decision['matched_policy']:
+        policy_id = decision['matched_policy']['id']
+        policy_name = decision['matched_policy']['name']
+        pe.increment_usage(policy_id, conn=conn)
+    else:
+        # 中心尚未配置策略：兼容放行，不扣任何配额
+        policy_id, policy_name = None, None
+    pe.log_event(
+        'download_decision', 'allow',
+        policy_id=policy_id, policy_name=policy_name,
+        subject=username, requester=username,
+        file_id=file_id, filename=file_info['name'], source='directory',
+        reason=decision['reason'], message=decision['message'],
+        actor=username, conn=conn,
+    )
+    conn.close()
+
+    logger.info(f"文件下载: {file_info['name']} (ID: {file_id}, 命中策略: {policy_name or '未配置策略-兼容放行'})")
     return send_file(file_info['path'], as_attachment=True, download_name=file_info['name'])
 
 
@@ -231,12 +285,28 @@ def create_share():
 
 @files_bp.route('/api/share/<share_id>', methods=['GET'])
 def get_share(share_id):
-    """获取分享链接信息（公开访问）"""
+    """获取分享链接信息（公开访问），同时返回授权策略预判，保证刷新/重新进入结果一致"""
     share = get_share_link_info(share_id)
     valid, error_msg = is_share_valid(share)
 
     if not share:
         return jsonify({'error': '分享链接不存在'}), 404
+
+    # 策略判定：以分享创建者为主体（与真正点下载时的判定完全相同，但不扣次数）
+    policy_decision = None
+    if valid:
+        conn = get_db()
+        policy_decision = pe.evaluate(share['created_by'], share['filename'], conn=conn)
+        conn.close()
+        # 前端只需展示层字段
+        policy_decision = {
+            'allowed': policy_decision['allowed'],
+            'reason': policy_decision['reason'],
+            'message': policy_decision['message'],
+            'matched_policy': policy_decision.get('matched_policy'),
+            'enforced': policy_decision.get('enforced'),
+            'disabled_matches': policy_decision.get('disabled_matches', []),
+        }
 
     share_data = {
         'share_id': share['id'],
@@ -248,7 +318,8 @@ def get_share(share_id):
         'download_count': share['download_count'],
         'created_at': share['created_at'],
         'is_valid': valid,
-        'error_msg': error_msg
+        'error_msg': error_msg,
+        'policy': policy_decision,
     }
 
     return jsonify(share_data)
@@ -256,31 +327,78 @@ def get_share(share_id):
 
 @files_bp.route('/api/share/<share_id>/download', methods=['GET'])
 def download_by_share(share_id):
-    """通过分享链接下载文件（公开访问）"""
+    """通过分享链接下载文件（公开访问）
+
+    授权判定主体是分享创建者：创建者授予自己哪些 用户×类型×时间×次数 的范围，
+    其分享链接就在同一范围内可用。判定引擎与目录页直连下载完全一致，
+    因此从公开页、目录页、重新进入的页面发起请求结果相同。
+    """
     share = get_share_link_info(share_id)
     valid, error_msg = is_share_valid(share)
 
     if not valid:
         return jsonify({'error': error_msg}), 404
 
+    # 取件人可能携带（过期）令牌，仅用于历史核对，不影响授权结果
+    requester = None
+    token = get_token_from_request()
+    if token:
+        requester = get_username_from_token(token)
+
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('SELECT name, path FROM files WHERE id = ?', (share['file_id'],))
     file_info = cursor.fetchone()
-    conn.close()
 
     if not file_info:
+        conn.close()
         return jsonify({'error': '文件不存在'}), 404
 
+    decision = pe.evaluate(share['created_by'], file_info['name'], conn=conn)
+    if not decision['allowed']:
+        pe.log_event(
+            'download_decision', 'deny',
+            policy_id=(decision.get('matched_policy') or {}).get('id'),
+            subject=share['created_by'], requester=requester,
+            file_id=share['file_id'], filename=file_info['name'],
+            source='public_share', reason=decision['reason'],
+            message=decision['message'], conn=conn,
+        )
+        conn.close()
+        logger.warning("分享下载被策略拒绝: 分享=%s 主体=%s 取件人=%s 原因=%s",
+                       share_id, share['created_by'], requester, decision['reason'])
+        return jsonify({'error': decision['message'], 'reason': decision['reason'],
+                        'detail': {k: decision.get(k) for k in
+                                   ('disabled_matches', 'conflicts', 'enforced')}}), 403
+
     if not os.path.abspath(file_info['path']).startswith(os.path.abspath(UPLOAD_FOLDER)):
+        conn.close()
         return jsonify({'error': '非法文件路径'}), 403
 
     if not os.path.exists(file_info['path']):
+        conn.close()
         return jsonify({'error': '文件不存在'}), 404
 
+    if decision['matched_policy']:
+        policy_id = decision['matched_policy']['id']
+        policy_name = decision['matched_policy']['name']
+        pe.increment_usage(policy_id, conn=conn)
+    else:
+        # 中心尚未配置策略：兼容放行，不扣任何配额
+        policy_id, policy_name = None, None
     increment_download_count(share_id)
+    pe.log_event(
+        'download_decision', 'allow',
+        policy_id=policy_id, policy_name=policy_name,
+        subject=share['created_by'], requester=requester,
+        file_id=share['file_id'], filename=file_info['name'],
+        source='public_share', reason=decision['reason'],
+        message=decision['message'], conn=conn,
+    )
+    conn.close()
 
-    logger.info(f"分享下载: 文件 {file_info['name']}, 分享ID {share_id}, 下载次数 {share['download_count'] + 1}")
+    logger.info(f"分享下载: 文件 {file_info['name']}, 分享ID {share_id}, "
+                f"命中策略 {policy_name or '未配置策略-兼容放行'}, 下载次数 {share['download_count'] + 1}")
     return send_file(file_info['path'], as_attachment=True, download_name=file_info['name'])
 
 
