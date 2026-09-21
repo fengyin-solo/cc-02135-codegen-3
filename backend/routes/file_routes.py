@@ -8,7 +8,8 @@ from flask import request, jsonify, send_file
 from werkzeug.utils import secure_filename
 from routes import files_bp
 from database import get_db
-from auth import verify_token, get_username_from_token, login_required
+from auth import verify_token, get_username_from_token, get_token_from_request, login_required
+from policies import evaluate_download, public_decision
 from config import UPLOAD_FOLDER, MAX_FILE_SIZE, BLOCKED_EXTENSIONS, SHARE_LINK_EXPIRE_HOURS, SHARE_LINK_MAX_DOWNLOADS
 
 logger = logging.getLogger(__name__)
@@ -88,22 +89,50 @@ def download_file(file_id):
         token = request.args.get('token')  # 向后兼容，建议前端迁移到 Authorization 头
 
     if not token or not verify_token(token):
-        return jsonify({'error': '未授权或token已过期'}), 401
+        # 失效令牌 / 无令牌：说明原因，绝不放行
+        return jsonify({'error': '未授权或token已过期',
+                        'decision': {'decision': 'deny', 'allowed': False,
+                                     'reason': 'invalid_token',
+                                     'reason_text': '未授权或token已过期',
+                                     'reason_detail': '登录令牌缺失或已失效，请重新验证身份',
+                                     'source': 'directory'}}), 401
+
+    username = get_username_from_token(token)
 
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('SELECT name, path FROM files WHERE id = ?', (file_id,))
     file_info = cursor.fetchone()
-    conn.close()
 
     if not file_info:
+        conn.close()
         return jsonify({'error': '文件不存在'}), 404
 
     if not os.path.abspath(file_info['path']).startswith(os.path.abspath(UPLOAD_FOLDER)):
+        conn.close()
         return jsonify({'error': '非法文件路径'}), 403
 
     if not os.path.exists(file_info['path']):
+        conn.close()
         return jsonify({'error': '文件不存在'}), 404
+
+    # 统一授权判定（目录入口）：策略配置、判定、错误反馈、历史在此衔接
+    decision = evaluate_download(
+        username=username,
+        file_id=file_id,
+        filename=file_info['name'],
+        source='directory',
+        enforced=True,
+        conn=conn,
+    )
+    conn.close()
+
+    if decision['decision'] != 'allow':
+        public = public_decision(decision)
+        logger.info('下载被策略拒绝: user=%s file=%s reason=%s',
+                    username, file_info['name'], decision['reason'])
+        return jsonify({'error': f"{public['reason_text']}：{public['reason_detail']}",
+                        'decision': public}), 403
 
     logger.info(f"文件下载: {file_info['name']} (ID: {file_id})")
     return send_file(file_info['path'], as_attachment=True, download_name=file_info['name'])
@@ -154,14 +183,6 @@ def increment_download_count(share_id):
     )
     conn.commit()
     conn.close()
-
-
-def get_token_from_request():
-    """从请求中获取 token"""
-    auth_header = request.headers.get('Authorization', '')
-    if auth_header.startswith('Bearer '):
-        return auth_header[7:]
-    return request.args.get('token')
 
 
 @files_bp.route('/api/share', methods=['POST'])
@@ -231,12 +252,50 @@ def create_share():
 
 @files_bp.route('/api/share/<share_id>', methods=['GET'])
 def get_share(share_id):
-    """获取分享链接信息（公开访问）"""
+    """获取分享链接信息（公开访问）
+
+    - 无令牌（访客）：沿用分享链接自身的有效期/次数校验
+    - 携带有效令牌（已登录用户，含“重新进入页面”）：改走统一策略引擎做预判，
+      判定口径与目录下载完全一致；该预判不消耗取件次数
+    """
     share = get_share_link_info(share_id)
-    valid, error_msg = is_share_valid(share)
 
     if not share:
         return jsonify({'error': '分享链接不存在'}), 404
+
+    valid, error_msg = is_share_valid(share)
+
+    token = get_token_from_request()
+    username = get_username_from_token(token) if token else None
+
+    decision_payload = None
+    if username:
+        # 已登录用户：与目录下载、公开页下载使用同一引擎（dry-run，仅展示）
+        conn = get_db()
+        decision = evaluate_download(
+            username=username,
+            file_id=share['file_id'],
+            filename=share['filename'],
+            source='share_reentry',
+            enforced=False,
+            conn=conn,
+        )
+        conn.close()
+        decision_payload = public_decision(decision)
+    else:
+        # 访客：以分享链接自身有效性为准
+        decision_payload = {
+            'decision': 'allow' if valid else 'deny',
+            'allowed': bool(valid),
+            'reason': 'share_valid' if valid else 'share_invalid',
+            'reason_text': '分享链接有效' if valid else (error_msg or '分享链接已失效'),
+            'reason_detail': '' if valid else (error_msg or ''),
+            'source': 'share_public',
+            'used': None,
+            'limit': None,
+            'remaining': None,
+            'policy': None,
+        }
 
     share_data = {
         'share_id': share['id'],
@@ -248,21 +307,16 @@ def get_share(share_id):
         'download_count': share['download_count'],
         'created_at': share['created_at'],
         'is_valid': valid,
-        'error_msg': error_msg
+        'error_msg': error_msg,
+        'authenticated': bool(username),
+        'decision': decision_payload,
     }
 
     return jsonify(share_data)
 
 
-@files_bp.route('/api/share/<share_id>/download', methods=['GET'])
-def download_by_share(share_id):
-    """通过分享链接下载文件（公开访问）"""
-    share = get_share_link_info(share_id)
-    valid, error_msg = is_share_valid(share)
-
-    if not valid:
-        return jsonify({'error': error_msg}), 404
-
+def _serve_shared_file(share):
+    """完成路径安全校验后发送文件"""
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('SELECT name, path FROM files WHERE id = ?', (share['file_id'],))
@@ -277,6 +331,61 @@ def download_by_share(share_id):
 
     if not os.path.exists(file_info['path']):
         return jsonify({'error': '文件不存在'}), 404
+
+    return file_info
+
+
+@files_bp.route('/api/share/<share_id>/download', methods=['GET'])
+def download_by_share(share_id):
+    """通过分享链接下载（公开访问）
+
+    - 无令牌访客：分享链接有效期/次数校验通过即放行（保持既有行为）
+    - 已登录用户：统一走策略引擎，与从文件库目录发起的下载判定完全一致，
+      且不再累加分享链接自身的下载次数（次数由策略的取件次数控制）
+    """
+    share = get_share_link_info(share_id)
+
+    token = get_token_from_request()
+    username = get_username_from_token(token) if token else None
+
+    if username:
+        # 已登录用户（含公开页/重新进入页）：统一策略判定
+        if not share:
+            return jsonify({'error': '分享链接不存在'}), 404
+
+        file_info = _serve_shared_file(share)
+        if isinstance(file_info, tuple):
+            return file_info
+
+        conn = get_db()
+        decision = evaluate_download(
+            username=username,
+            file_id=share['file_id'],
+            filename=file_info['name'],
+            source='share_public',
+            enforced=True,
+            conn=conn,
+        )
+        conn.close()
+
+        if decision['decision'] != 'allow':
+            public = public_decision(decision)
+            logger.info('分享下载被策略拒绝: user=%s share=%s reason=%s',
+                        username, share_id, decision['reason'])
+            return jsonify({'error': f"{public['reason_text']}：{public['reason_detail']}",
+                            'decision': public}), 403
+
+        logger.info(f"授权分享下载: 文件 {file_info['name']}, 分享ID {share_id}, 用户 {username}")
+        return send_file(file_info['path'], as_attachment=True, download_name=file_info['name'])
+
+    # 访客：沿用分享链接校验
+    valid, error_msg = is_share_valid(share)
+    if not valid:
+        return jsonify({'error': error_msg}), 404
+
+    file_info = _serve_shared_file(share)
+    if isinstance(file_info, tuple):
+        return file_info
 
     increment_download_count(share_id)
 

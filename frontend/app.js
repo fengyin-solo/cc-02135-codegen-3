@@ -47,20 +47,32 @@ async function updateUserBar() {
     const userBar = document.getElementById('userBar');
     const currentUser = document.getElementById('currentUser');
     const userAvatar = document.getElementById('userAvatar');
+    const policyEntry = document.getElementById('policyEntry');
     const user = TokenManager.getUser();
-    
+
     if (user && TokenManager.get() && await TokenManager.isValid()) {
         currentUser.textContent = user;
         userAvatar.textContent = user.charAt(0).toUpperCase();
         userBar.classList.remove('hidden');
+        if (policyEntry) policyEntry.style.display = user === 'admin' ? 'block' : 'none';
         loadMyShares();
     } else {
         userBar.classList.add('hidden');
+        if (policyEntry) policyEntry.style.display = 'none';
         const shareSection = document.getElementById('mySharesSection');
         if (shareSection) {
             shareSection.style.display = 'none';
         }
     }
+}
+
+// 统一格式化后端的结构化判定原因（错误反馈）
+function formatDecisionError(result, fallback) {
+    if (result && result.decision) {
+        const d = result.decision;
+        return `${d.reason_text || fallback}${d.reason_detail ? '：' + d.reason_detail : ''}`;
+    }
+    return (result && result.error) || fallback || '未知错误';
 }
 
 // 退出登录
@@ -230,8 +242,22 @@ async function requestDownload(fileId) {
                 window.URL.revokeObjectURL(url);
                 a.remove();
             } else {
-                const result = await response.json();
-                alert(`下载失败: ${result.error || '未知错误'}`);
+                const result = await response.json().catch(() => null);
+                if (response.status === 401) {
+                    // 令牌失效：清除登录态并要求重新验证，不把它当作策略拒绝
+                    TokenManager.clear();
+                    await updateUserBar();
+                    hideLoading();
+                    document.getElementById('downloadFileId').value = fileId;
+                    document.getElementById('authModal').classList.add('active');
+                    document.getElementById('authError').textContent = '登录已过期，请重新验证身份';
+                    document.getElementById('username').value = '';
+                    document.getElementById('password').value = '';
+                    document.getElementById('username').focus();
+                    return;
+                }
+                // 403 等：策略拒绝，展示结构化原因
+                alert(`下载被拒绝: ${formatDecisionError(result)}`);
             }
         } catch (error) {
             alert(`下载失败: ${error.message}`);
@@ -315,8 +341,9 @@ document.getElementById('authForm').addEventListener('submit', async (e) => {
                     window.URL.revokeObjectURL(url);
                     a.remove();
                 } else {
-                    const errResult = await downloadResponse.json();
-                    document.getElementById('authError').textContent = `下载失败: ${errResult.error || '未知错误'}`;
+                    const errResult = await downloadResponse.json().catch(() => null);
+                    document.getElementById('authError').textContent =
+                        `下载被拒绝: ${formatDecisionError(errResult)}`;
                 }
             } catch (downloadError) {
                 document.getElementById('authError').textContent = `下载失败: ${downloadError.message}`;

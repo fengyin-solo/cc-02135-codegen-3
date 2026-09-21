@@ -26,6 +26,7 @@ services:
       - RATE_LIMIT_REQUESTS=5
       - RATE_LIMIT_WINDOW=60
       - MAX_FILE_SIZE=52428800
+      - ADMIN_USERNAMES=admin
     volumes:
       - uploads:/app/uploads
       - data:/app/data

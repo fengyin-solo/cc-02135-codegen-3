@@ -32,6 +32,9 @@
                     <p id="fileSize" style="color: var(--text-secondary); font-size: 0.9375rem;"></p>
                 </div>
 
+                <!-- 统一授权判定结果（与文件库目录、重新进入页面同一口径） -->
+                <div id="decisionBanner" class="decision-banner"></div>
+
                 <div class="share-meta" style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border); border-radius: 16px; padding: 20px; margin-bottom: 32px;">
                     <div style="display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border);">
                         <span style="color: var(--text-secondary); font-size: 0.875rem;">分享者</span>
@@ -52,7 +55,7 @@
                 </button>
 
                 <p style="text-align: center; color: var(--text-secondary); font-size: 0.8125rem; margin-top: 20px;">
-                    请在有效期内下载，过期后链接将失效
+                    下载授权由策略中心统一判定；每次进入页面都会重新校验，结论与文件库目录保持一致
                 </p>
             </div>
         </div>
@@ -72,25 +75,41 @@
         let currentShareId = null;
         let shareInfo = null;
 
+        // 原因码 -> 中文（与后端策略中心口径一致）
+        const REASON_TEXT = {
+            no_policy_legacy: '系统尚未配置授权策略，当前按默认规则放行',
+            no_matching_policy: '没有适用于该用户与文件类型的授权策略',
+            policy_disabled: '匹配的授权策略已停用',
+            policy_conflict: '存在多条相互重叠的启用策略，判定冲突',
+            time_outside_window: '当前时间不在策略允许的时间范围内',
+            quota_exhausted: '该策略允许的取件次数已用尽',
+            share_valid: '分享链接有效，访客可直接下载',
+            share_invalid: '分享链接已失效'
+        };
+
+        function getToken() { return localStorage.getItem('auth_token'); }
+
+        function authHeaders() {
+            const t = getToken();
+            return t ? { 'Authorization': `Bearer ${t}` } : {};
+        }
+
         // 显示加载动画
         function showLoading(text = '加载中...') {
             document.getElementById('loadingOverlayText').textContent = text;
             document.getElementById('loadingOverlay').classList.add('active');
         }
 
-        // 隐藏加载动画
         function hideLoading() {
             document.getElementById('loadingOverlay').classList.remove('active');
         }
 
-        // HTML转义防止XSS
         function escapeHtml(text) {
             const div = document.createElement('div');
-            div.textContent = text;
+            div.textContent = text == null ? '' : String(text);
             return div.innerHTML;
         }
 
-        // 获取文件图标
         function getFileIcon(filename) {
             const ext = filename.split('.').pop().toLowerCase();
             const icons = {
@@ -103,7 +122,6 @@
             return icons[ext] || '📁';
         }
 
-        // 格式化文件大小
         function formatSize(bytes) {
             if (bytes === 0) return '0 B';
             const k = 1024;
@@ -112,40 +130,32 @@
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
 
-        // 格式化时间戳
         function formatTimestamp(timestamp) {
             if (!timestamp) return '永久有效';
             const date = new Date(timestamp * 1000);
             return date.toLocaleString('zh-CN', {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit'
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit'
             });
         }
 
-        // 获取分享链接信息
+        // 获取分享链接信息（每次进入都重新请求，不使用本地缓存的旧结论）
         async function loadShareInfo() {
-            // 从 URL hash 获取 share_id
             currentShareId = window.location.hash.substring(1);
-            
+
             if (!currentShareId) {
                 showError('无效链接', '请检查您的分享链接是否完整');
                 return;
             }
 
             try {
-                const response = await fetch(`${API_BASE}/share/${currentShareId}`);
+                const response = await fetch(`${API_BASE}/share/${currentShareId}`, {
+                    headers: authHeaders()
+                });
                 shareInfo = await response.json();
 
                 if (!response.ok) {
                     showError('链接不存在', '该分享链接不存在');
-                    return;
-                }
-
-                if (!shareInfo.is_valid) {
-                    showError('链接已失效', shareInfo.error_msg || '该分享链接已过期或下载次数已用完');
                     return;
                 }
 
@@ -155,7 +165,6 @@
             }
         }
 
-        // 显示错误状态
         function showError(title, message) {
             document.getElementById('loadingState').style.display = 'none';
             document.getElementById('errorState').style.display = 'block';
@@ -163,7 +172,44 @@
             document.getElementById('errorMessage').textContent = message;
         }
 
-        // 显示分享内容
+        // 渲染统一判定横幅并决定下载按钮可用性
+        function renderDecisionBanner(info) {
+            const banner = document.getElementById('decisionBanner');
+            const btn = document.getElementById('downloadBtn');
+            const d = info.decision;
+
+            if (!d) {
+                // 兜底：旧后端或异常情况，回退到分享链接自身有效性
+                const valid = info.is_valid;
+                banner.className = `decision-banner ${valid ? 'allow' : 'deny'}`;
+                banner.innerHTML = valid
+                    ? '✅ 该分享链接有效，可直接下载'
+                    : `⛔ ${escapeHtml(info.error_msg || '该分享链接已失效')}`;
+                btn.disabled = !valid;
+                btn.style.opacity = valid ? '1' : '0.5';
+                return;
+            }
+
+            const allowed = d.allowed;
+            banner.className = `decision-banner ${allowed ? 'allow' : 'deny'}`;
+            const title = allowed
+                ? `✅ 授权判定：放行（${escapeHtml(d.reason_text || REASON_TEXT[d.reason] || '')}）`
+                : `⛔ 授权判定：拒绝 — ${escapeHtml(d.reason_text || REASON_TEXT[d.reason] || '')}`;
+            let detail = d.reason_detail ? `<div class="decision-banner-detail">${escapeHtml(d.reason_detail)}</div>` : '';
+            let quota = '';
+            if (allowed && d.limit) {
+                quota = `<div class="decision-banner-detail">取件次数：${d.used || 0} / ${d.limit}（剩余 ${d.remaining}）</div>`;
+            }
+            const who = info.authenticated
+                ? '<div class="decision-banner-detail">当前为登录用户，按下载授权策略判定（与文件库目录一致）</div>'
+                : '<div class="decision-banner-detail">当前为访客，按分享链接有效期与次数判定</div>';
+            banner.innerHTML = title + who + detail + quota;
+
+            btn.disabled = !allowed;
+            btn.style.opacity = allowed ? '1' : '0.5';
+            btn.title = allowed ? '' : '当前授权策略不允许下载';
+        }
+
         function showShareContent(info) {
             document.getElementById('loadingState').style.display = 'none';
             document.getElementById('shareContent').style.display = 'block';
@@ -173,25 +219,39 @@
             document.getElementById('fileSize').textContent = formatSize(info.filesize);
             document.getElementById('sharedBy').textContent = escapeHtml(info.created_by);
             document.getElementById('expireTime').textContent = formatTimestamp(info.expires_at);
-            document.getElementById('downloadCount').textContent = 
+            document.getElementById('downloadCount').textContent =
                 info.max_downloads ? `${info.download_count} / ${info.max_downloads} 次` : `${info.download_count} 次（无限制）`;
+
+            renderDecisionBanner(info);
         }
 
-        // 下载文件
+        // 下载文件（携带令牌；最终以服务端实时判定为准）
         async function downloadFile() {
             if (!currentShareId) return;
+            if (document.getElementById('downloadBtn').disabled) {
+                alert('当前授权策略不允许下载该文件，详见页面上的判定说明。');
+                return;
+            }
 
             showLoading('准备下载...');
 
             try {
-                const response = await fetch(`${API_BASE}/share/${currentShareId}/download`);
-                
+                const response = await fetch(`${API_BASE}/share/${currentShareId}/download`, {
+                    headers: authHeaders()
+                });
+
                 if (!response.ok) {
-                    const result = await response.json();
+                    const result = await response.json().catch(() => null);
                     hideLoading();
-                    alert(`下载失败: ${result.error || '未知错误'}`);
-                    
-                    // 重新加载分享信息，可能是过期了
+                    let msg = '未知错误';
+                    if (result && result.decision) {
+                        msg = `${result.decision.reason_text || ''}${result.decision.reason_detail ? '：' + result.decision.reason_detail : ''}`;
+                    } else if (result) {
+                        msg = result.error || msg;
+                    }
+                    alert(`下载失败: ${msg}`);
+
+                    // 重新拉取判定结果（可能刚过期/次数用尽/被停用），保证页面结论最新
                     loadShareInfo();
                     return;
                 }
@@ -199,7 +259,7 @@
                 const blob = await response.blob();
                 const contentDisposition = response.headers.get('Content-Disposition');
                 let filename = shareInfo ? shareInfo.filename : 'download';
-                
+
                 if (contentDisposition) {
                     const match = contentDisposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';\n]+)/i);
                     if (match) filename = decodeURIComponent(match[1]);
@@ -216,17 +276,14 @@
 
                 hideLoading();
 
-                // 刷新分享信息，更新下载次数
-                setTimeout(() => {
-                    loadShareInfo();
-                }, 500);
+                // 重新进入页面视角：刷新服务端最新判定与剩余次数，不依赖本地推断
+                setTimeout(loadShareInfo, 500);
             } catch (error) {
                 hideLoading();
                 alert(`下载失败: ${error.message}`);
             }
         }
 
-        // 页面加载时获取分享信息
         document.addEventListener('DOMContentLoaded', loadShareInfo);
     </script>
 </body>

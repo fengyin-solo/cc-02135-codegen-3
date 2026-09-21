@@ -24,6 +24,28 @@ def client():
         yield client
 
 
+@pytest.fixture(autouse=True)
+def isolate_db():
+    """每个测试前后清空业务数据，避免策略/文件/token 跨用例残留造成判定污染"""
+    from database import get_db
+    init_db()
+    conn = get_db()
+    cursor = conn.cursor()
+    for table in ('policy_decision_log', 'download_policies', 'share_links',
+                  'tokens', 'files'):
+        cursor.execute(f'DELETE FROM {table}')
+    conn.commit()
+    conn.close()
+    yield
+    conn = get_db()
+    cursor = conn.cursor()
+    for table in ('policy_decision_log', 'download_policies', 'share_links',
+                  'tokens', 'files'):
+        cursor.execute(f'DELETE FROM {table}')
+    conn.commit()
+    conn.close()
+
+
 @pytest.fixture
 def auth_token():
     """获取认证 token（使用独立客户端避免速率限制）"""

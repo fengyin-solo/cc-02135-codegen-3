@@ -14,5 +14,10 @@ BLOCKED_EXTENSIONS = {'exe', 'sh', 'bat', 'cmd', 'ps1', 'py', 'php', 'jsp', 'cgi
 SHARE_LINK_EXPIRE_HOURS = int(os.getenv('SHARE_LINK_EXPIRE_HOURS', 24))
 SHARE_LINK_MAX_DOWNLOADS = int(os.getenv('SHARE_LINK_MAX_DOWNLOADS', 10))
 
+# 下载授权策略中心：策略管理员账号（逗号分隔）
+ADMIN_USERNAMES = set(
+    name.strip() for name in os.getenv('ADMIN_USERNAMES', 'admin').split(',') if name.strip()
+)
+
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)

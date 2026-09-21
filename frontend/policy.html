@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>下载授权策略中心 - CloudVault</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+</head>
+<body>
+    <div class="container policy-container">
+        <div class="policy-header">
+            <a href="index.html" class="back-link">← 返回文件库</a>
+            <h1>🛡️ 下载授权策略中心</h1>
+            <p class="subtitle">按用户、文件类型、时间范围与取件次数组合维护下载授权</p>
+        </div>
+
+        <div id="modeBanner" class="mode-banner"></div>
+
+        <div class="policy-toolbar">
+            <button class="upload-btn" onclick="openPolicyModal()"><span>＋ 新建策略</span></button>
+            <button class="btn-secondary" onclick="loadPolicies()">刷新</button>
+        </div>
+
+        <h2>策略列表</h2>
+        <div id="policyList" class="policy-list"></div>
+
+        <h2 style="margin-top: 40px;">策略命中结果预览</h2>
+        <div class="preview-panel">
+            <p class="panel-hint">输入用户名与文件名，预览当前策略体系下的判定结果（不消耗取件次数、不写入正式历史）。</p>
+            <div class="preview-form">
+                <select id="previewSource" class="policy-input">
+                    <option value="directory">文件库目录入口</option>
+                    <option value="share_public">公开分享页入口</option>
+                    <option value="share_reentry">重新进入的分享页</option>
+                </select>
+                <input type="text" id="previewUser" class="policy-input" placeholder="用户名，如 user" list="userSuggestions">
+                <datalist id="userSuggestions">
+                    <option value="admin"></option>
+                    <option value="user"></option>
+                    <option value="test"></option>
+                </datalist>
+                <input type="text" id="previewFile" class="policy-input" placeholder="文件名，如 report.pdf">
+                <button class="btn-primary" onclick="runPreview()">预览判定</button>
+            </div>
+            <div id="previewResult"></div>
+        </div>
+
+        <h2 style="margin-top: 40px;">授权判定历史核对</h2>
+        <div class="log-filters">
+            <input type="text" id="logUser" class="policy-input" placeholder="按用户名过滤">
+            <input type="text" id="logFile" class="policy-input" placeholder="按文件名过滤">
+            <select id="logDecision" class="policy-input">
+                <option value="">全部结论</option>
+                <option value="allow">放行</option>
+                <option value="deny">拒绝</option>
+            </select>
+            <select id="logSource" class="policy-input">
+                <option value="">全部入口</option>
+                <option value="directory">文件库目录</option>
+                <option value="share_public">公开分享页</option>
+                <option value="share_reentry">重新进入页面</option>
+            </select>
+            <button class="btn-secondary" onclick="loadLogs(1)">查询</button>
+        </div>
+        <div id="logList" class="log-list"></div>
+        <div id="logPager" class="log-pager"></div>
+    </div>
+
+    <!-- 加载动画 -->
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="loader">
+            <div class="spinner"></div>
+            <p id="loadingText">加载中...</p>
+        </div>
+    </div>
+
+    <!-- 登录弹窗（管理员身份验证） -->
+    <div id="authModal" class="modal">
+        <div class="modal-content">
+            <h2>管理员验证</h2>
+            <p>策略中心需要管理员登录</p>
+            <form id="authForm">
+                <input type="text" id="username" placeholder="管理员用户名" required autocomplete="username">
+                <input type="password" id="password" placeholder="密码" required autocomplete="current-password">
+                <div class="modal-buttons">
+                    <a href="index.html" class="btn-secondary">返回</a>
+                    <button type="submit" class="btn-primary">登录</button>
+                </div>
+                <div id="authError" class="error-msg"></div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 策略编辑弹窗 -->
+    <div id="policyModal" class="modal modal-wide">
+        <div class="modal-content">
+            <h2 id="policyModalTitle">新建策略</h2>
+            <input type="hidden" id="policyId">
+
+            <div class="form-group">
+                <label>策略名称 *</label>
+                <input type="text" id="policyName" class="policy-input" maxlength="100" placeholder="例如：市场部工作日下载 PDF">
+            </div>
+
+            <div class="form-group">
+                <label>策略说明（可选，留空将自动生成）</label>
+                <textarea id="policyDesc" class="policy-input" rows="2" maxlength="500" placeholder="描述这条策略的用途"></textarea>
+            </div>
+
+            <div class="scope-grid">
+                <div class="form-group">
+                    <label>授权用户（逗号分隔，留空 = 任意已登录用户）</label>
+                    <input type="text" id="policyUsers" class="policy-input" placeholder="admin, user">
+                </div>
+                <div class="form-group">
+                    <label>允许的文件类型（扩展名，逗号分隔，留空 = 任意类型）</label>
+                    <input type="text" id="policyExts" class="policy-input" placeholder="pdf, zip, docx">
+                </div>
+                <div class="form-group">
+                    <label>每日允许时段开始（留空 = 00:00，可跨午夜）</label>
+                    <input type="time" id="policyStart" class="policy-input">
+                </div>
+                <div class="form-group">
+                    <label>每日允许时段结束（留空 = 24:00）</label>
+                    <input type="time" id="policyEnd" class="policy-input">
+                </div>
+                <div class="form-group">
+                    <label>每人取件次数上限（留空 = 不限）</label>
+                    <input type="number" id="policyMax" class="policy-input" min="1" step="1" placeholder="例如 5">
+                </div>
+            </div>
+
+            <div id="policyErrors" class="policy-errors"></div>
+            <div id="policyWarnings" class="policy-warnings"></div>
+
+            <div class="modal-buttons">
+                <button type="button" class="btn-secondary" onclick="closePolicyModal()">取消</button>
+                <button type="button" class="btn-primary" onclick="savePolicy()">保存策略</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="policy.js"></script>
+</body>
+</html>

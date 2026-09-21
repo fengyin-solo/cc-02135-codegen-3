@@ -120,6 +120,14 @@ def get_username_from_token(token):
     return None
 
 
+def get_token_from_request():
+    """从当前请求中获取 token（Authorization 头优先，兼容查询参数）"""
+    auth_header = request.headers.get('Authorization', '')
+    if auth_header.startswith('Bearer '):
+        return auth_header[7:]
+    return request.args.get('token')
+
+
 def login_required(f):
     """登录认证装饰器"""
     @wraps(f)

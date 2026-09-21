@@ -56,6 +56,41 @@ def init_db():
         )
     ''')
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS download_policies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            usernames TEXT DEFAULT '',
+            extensions TEXT DEFAULT '',
+            start_time TEXT,
+            end_time TEXT,
+            max_downloads INTEGER,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_by TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS policy_decision_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT,
+            file_id TEXT,
+            filename TEXT,
+            extension TEXT,
+            source TEXT DEFAULT 'directory',
+            decision TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            reason_detail TEXT DEFAULT '',
+            matched_policy_id INTEGER,
+            matched_policy_name TEXT,
+            enforced INTEGER NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     default_users = [
         ('admin', hashlib.sha256('admin123'.encode()).hexdigest()),
         ('user', hashlib.sha256('user123'.encode()).hexdigest()),
